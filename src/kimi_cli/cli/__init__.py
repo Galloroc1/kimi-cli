@@ -292,6 +292,18 @@ def kimi(
             ),
         ),
     ] = None,
+    # Unified mode
+    unified_mode: Annotated[
+        Literal["reactive", "proactive", "adaptive"] | None,
+        typer.Option(
+            "--unified-mode",
+            help=(
+                "Enable unified mode with specified execution strategy: "
+                "reactive (step-by-step), proactive (parallel graph), "
+                "adaptive (auto-select). Default: disabled (use standard KimiSoul)."
+            ),
+        ),
+    ] = None,
 ):
     """Kimi, your next CLI agent."""
     if ctx.invoked_subcommand is not None:
@@ -460,6 +472,18 @@ def kimi(
             session = await Session.create(work_dir)
             logger.info("Created new session: {session_id}", session_id=session.id)
 
+        # Convert unified_mode string to ExecutionMode if specified
+        execution_mode = None
+        if unified_mode is not None:
+            from kimi_cli.soul.unified.types import ExecutionMode
+
+            mode_map = {
+                "reactive": ExecutionMode.REACTIVE,
+                "proactive": ExecutionMode.PROACTIVE,
+                "adaptive": ExecutionMode.ADAPTIVE,
+            }
+            execution_mode = mode_map.get(unified_mode)
+
         instance = await KimiCLI.create(
             session,
             config=config,
@@ -472,6 +496,7 @@ def kimi(
             max_steps_per_turn=max_steps_per_turn,
             max_retries_per_step=max_retries_per_step,
             max_ralph_iterations=max_ralph_iterations,
+            unified_mode=execution_mode,
         )
         match ui:
             case "shell":

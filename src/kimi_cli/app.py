@@ -22,6 +22,8 @@ from kimi_cli.soul import run_soul
 from kimi_cli.soul.agent import Runtime, load_agent
 from kimi_cli.soul.context import Context
 from kimi_cli.soul.kimisoul import KimiSoul
+from kimi_cli.soul.unified.loader import load_unified_agent, create_unified_soul
+from kimi_cli.soul.unified.types import ExecutionMode
 from kimi_cli.utils.aioqueue import QueueShutDown
 from kimi_cli.utils.logging import logger, redirect_stderr_to_logger
 from kimi_cli.utils.path import shorten_home
@@ -66,6 +68,8 @@ class KimiCLI:
         max_steps_per_turn: int | None = None,
         max_retries_per_step: int | None = None,
         max_ralph_iterations: int | None = None,
+        # Unified mode
+        unified_mode: ExecutionMode | None = None,
     ) -> KimiCLI:
         """
         Create a KimiCLI instance.
@@ -88,6 +92,8 @@ class KimiCLI:
                 Defaults to None.
             max_ralph_iterations (int | None, optional): Extra iterations after the first turn in
                 Ralph mode. Defaults to None.
+            unified_mode (ExecutionMode | None, optional): Unified execution mode. If set,
+                uses UnifiedSoul instead of KimiSoul. Defaults to None (disabled).
 
         Raises:
             FileNotFoundError: When the agent file is not found.
@@ -150,17 +156,31 @@ class KimiCLI:
 
         if agent_file is None:
             agent_file = DEFAULT_AGENT_FILE
-        agent = await load_agent(agent_file, runtime, mcp_configs=mcp_configs or [])
 
-        context = Context(session.context_file)
-        await context.restore()
+        # Use UnifiedSoul if unified_mode is specified
+        if unified_mode is not None:
+            logger.info("Using UnifiedSoul with mode: {mode}", mode=unified_mode)
+            unified_agent = await load_unified_agent(
+                agent_file=agent_file,
+                config=config,
+                oauth=oauth,
+                llm=llm,
+                session=session,
+                execution_mode=unified_mode,
+                mcp_configs=mcp_configs or [],
+            )
+            soul = create_unified_soul(unified_agent, session.context_file, mode=unified_mode)
+        else:
+            agent = await load_agent(agent_file, runtime, mcp_configs=mcp_configs or [])
+            context = Context(session.context_file)
+            await context.restore()
+            soul = KimiSoul(agent, context=context)
 
-        soul = KimiSoul(agent, context=context)
         return KimiCLI(soul, runtime, env_overrides)
 
     def __init__(
         self,
-        _soul: KimiSoul,
+        _soul: KimiSoul | Any,  # Allow UnifiedSoul as well
         _runtime: Runtime,
         _env_overrides: dict[str, str],
     ) -> None:
@@ -169,8 +189,8 @@ class KimiCLI:
         self._env_overrides = _env_overrides
 
     @property
-    def soul(self) -> KimiSoul:
-        """Get the KimiSoul instance."""
+    def soul(self) -> Any:
+        """Get the Soul instance (KimiSoul or UnifiedSoul)."""
         return self._soul
 
     @property
