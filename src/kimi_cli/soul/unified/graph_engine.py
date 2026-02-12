@@ -265,36 +265,65 @@ class GraphEngine:
         from kosong.message import Message
         from kimi_cli.soul import LLMNotSet
         
-        # Build planning prompt
+        # Build planning prompt with Kimi CLI compatible format
         tools_desc = self._get_tools_description()
         
-        prompt = f"""You are a task planner. Decompose the following task into a directed acyclic graph (DAG) of subtasks.
+        prompt = f"""You are a task planner for Kimi Code CLI. Decompose the following task into a directed acyclic graph (DAG) of subtasks.
 
 Available tools:
 {tools_desc}
 
 Task: {task}
 
-Create a plan with:
-1. Nodes: Each node is a subtask that can be executed
-2. Edges: Dependencies between nodes (which must complete before others start)
-3. For each node, specify the tool to use and arguments
+Create a detailed execution plan:
+1. Break down the task into small, specific subtasks
+2. For subtasks that involve file operations, shell commands, or web requests, ALWAYS specify the appropriate tool
+3. Use parallel nodes for independent operations (e.g., reading multiple files)
+4. Each node should do ONE specific thing
 
-IMPORTANT RULES:
-- The "args" field must contain ONLY literal values (numbers, strings, booleans) that match the tool's parameter schema
-- DO NOT use template placeholders like "{{{{node_1.result}}}}" or "{{{{result}}}}"
-- If a node depends on a previous node's result, you have two options:
-  a) Use literal values if you can compute them (e.g., if node_1 computes 5+3=8, use "a": 8 directly)
-  b) Or set "tool": null and use the description to explain the computation, letting the LLM handle it
+CRITICAL RULES:
+- When reading files, use "tool": "ReadFile" with "args": {{"path": "absolute/path"}}
+- When running commands, use "tool": "Shell" with "args": {{"command": "..."}}
+- When searching, use "tool": "Grep" or "tool": "SearchWeb"
+- Only use "tool": null for pure reasoning/summarization tasks
+- Use absolute paths for all file operations
+- Create separate nodes for each independent file read
 
-Output format (JSON):
+Example for "read README and pyproject.toml":
 {{
     "nodes": [
         {{
-            "id": "node_1",
+            "id": "read_readme",
+            "description": "Read README.md file",
+            "tool": "ReadFile",
+            "args": {{"path": "/Users/ran/pyproject/kimi-cli/README.md"}},
+            "dependencies": []
+        }},
+        {{
+            "id": "read_pyproject",
+            "description": "Read pyproject.toml file",
+            "tool": "ReadFile", 
+            "args": {{"path": "/Users/ran/pyproject/kimi-cli/pyproject.toml"}},
+            "dependencies": []
+        }},
+        {{
+            "id": "summarize",
+            "description": "Summarize the project based on files",
+            "tool": null,
+            "args": {{}},
+            "dependencies": ["read_readme", "read_pyproject"]
+        }}
+    ]
+}}
+
+Output format (JSON only):
+{{
+    "nodes": [
+        {{
+            "id": "unique_node_id",
             "description": "What this node does",
-            "tool": "tool_name",
-            "args": {{"arg1": "value1"}},
+            "tool": "ToolName - use exact tool name from available tools",
+            "args": {{"param": "value"}},
             "dependencies": []
         }}
     ]
@@ -310,7 +339,7 @@ Plan:"""
         from kosong import Message
         
         history = [
-            Message(role="system", content="You are a task planning assistant."),
+            Message(role="system", content="You are a task planning assistant for Kimi Code CLI. Create detailed, parallelizable task graphs."),
             Message(role="user", content=prompt),
         ]
         
@@ -417,65 +446,75 @@ Plan:"""
     
     async def _execute_node(self, node: TaskNode) -> str:
         """Execute a single node."""
+        import json
         from kimi_cli.soul import get_wire_or_none, LLMNotSet
-        from kimi_cli.wire.types import StepBegin
+        from kimi_cli.wire.types import StepBegin, TextPart
         from kosong.message import Message
         from kimi_cli.utils.logging import logger
         
-        logger.debug("Executing node {node_id}: {description}", node_id=node.id, description=node.description)
+        logger.info("Executing node {node_id}: {description}", node_id=node.id, description=node.description)
         
         wire = get_wire_or_none()
         if wire is not None:
             wire.soul_side.send(StepBegin(n=self._iteration + 1))
         
-        if node.tool is None:
+        if self._agent.llm is None:
+            raise LLMNotSet()
+        
+        import kosong
+        
+        # Build the prompt for this node
+        if node.tool:
+            # This node should use a specific tool
+            prompt = f"{node.description}\n\nUse the {node.tool} tool with these arguments: {json.dumps(node.args)}"
+        else:
             # Direct LLM call
-            if self._agent.llm is None:
-                raise LLMNotSet()
-            
-            import kosong
-            
-            logger.debug("Node {node_id}: Direct LLM call", node_id=node.id)
-            result = await kosong.generate(
+            prompt = node.description
+        
+        logger.info("Node {node_id}: Using kosong.step with prompt: {prompt}", node_id=node.id, prompt=prompt[:100])
+        
+        # Use kosong.step to allow tool calls
+        try:
+            step_result = await kosong.step(
                 self._agent.llm.chat_provider,
                 system_prompt=self._agent.system_prompt,
-                tools=[],
-                history=self._context.history + [Message(role="user", content=node.description)],
+                toolset=self._agent.toolset,
+                history=self._context.history + [Message(role="user", content=prompt)],
             )
-            return result.message.extract_text()
-        
-        # Tool execution
-        logger.debug("Node {node_id}: Tool execution - {tool_name}", node_id=node.id, tool_name=node.tool)
-        tool = self._agent.get_tool(node.tool)
-        if tool is None:
-            logger.error("Node {node_id}: Tool '{tool_name}' not found", node_id=node.id, tool_name=node.tool)
-            return f"Error: Tool '{node.tool}' not found"
-        
-        # Create params from node.args
-        logger.debug("Node {node_id}: Creating params with args: {args}", node_id=node.id, args=node.args)
-        try:
-            params = tool.params(**node.args)
+            
+            # Wait for tool results
+            tool_results = await step_result.tool_results()
+            
+            # Get the assistant's message
+            response_text = step_result.message.extract_text()
+            
+            logger.info("Node {node_id}: Got response: {response}", node_id=node.id, response=response_text[:100])
+            
+            # If there are tool results, include them
+            if tool_results:
+                for tr in tool_results:
+                    if hasattr(tr, 'return_value') and not tr.return_value.is_error:
+                        result_output = tr.return_value.output if hasattr(tr.return_value, 'output') else str(tr.return_value)
+                        response_text += f"\n\n[Tool result: {result_output[:200]}...]"
+            
+            return response_text
+            
         except Exception as e:
-            logger.error("Node {node_id}: Failed to create params: {error}", node_id=node.id, error=str(e))
-            logger.error("Expected params schema: {schema}", schema=tool.params.model_json_schema() if hasattr(tool.params, 'model_json_schema') else 'N/A')
-            raise
-        
-        logger.debug("Node {node_id}: Calling tool with params: {params}", node_id=node.id, params=params.model_dump())
-        result = await tool(params)
-        
-        # result is ToolOk or ToolError
-        if result.is_error:
-            logger.error("Node {node_id}: Tool execution failed: {error}", node_id=node.id, error=result.message)
-            return f"Error: {result.message}"
-        
-        logger.debug("Node {node_id}: Tool execution successful", node_id=node.id)
-        return result.output
+            error_msg = f"Node execution failed: {e}"
+            logger.error("Node {node_id}: {error_msg}", node_id=node.id)
+            if wire is not None:
+                wire.soul_side.send(TextPart(text=f"[Error: {error_msg}]"))
+            return f"Error: {error_msg}"
     
     def _get_tools_description(self) -> str:
         """Get description of available tools with their parameter schemas."""
         import json
         descriptions = []
         for tool in self._agent.toolset.tools:
+            # Skip internal tools
+            if tool.name in ('Task', 'SetTodoList'):
+                continue
+                
             # Get parameter schema from the tool's params model
             if hasattr(tool, 'params') and tool.params:
                 schema = tool.params.model_json_schema()
@@ -494,6 +533,7 @@ Plan:"""
             else:
                 params_str = "      (no parameters)"
             
+            # Use the exact tool name as registered
             descriptions.append(f"- {tool.name}: {tool.description}\n    Parameters:\n{params_str}")
         
         return "\n\n".join(descriptions) if descriptions else "(no tools available)"
