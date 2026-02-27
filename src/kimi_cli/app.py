@@ -70,6 +70,8 @@ class KimiCLI:
         max_ralph_iterations: int | None = None,
         # Unified mode
         unified_mode: ExecutionMode | None = None,
+        # Custom LLM
+        llm: LLM | None = None,
     ) -> KimiCLI:
         """
         Create a KimiCLI instance.
@@ -94,6 +96,8 @@ class KimiCLI:
                 Ralph mode. Defaults to None.
             unified_mode (ExecutionMode | None, optional): Unified execution mode. If set,
                 uses UnifiedSoul instead of KimiSoul. Defaults to None (disabled).
+            llm (LLM | None, optional): Custom LLM instance to use. If provided, skips creating
+                a new LLM from config. Defaults to None.
 
         Raises:
             FileNotFoundError: When the agent file is not found.
@@ -140,17 +144,21 @@ class KimiCLI:
         # determine thinking mode
         thinking = config.default_thinking if thinking is None else thinking
 
-        llm = create_llm(
-            provider,
-            model,
-            thinking=thinking,
-            session_id=session.id,
-            oauth=oauth,
-        )
-        if llm is not None:
-            logger.info("Using LLM provider: {provider}", provider=provider)
-            logger.info("Using LLM model: {model}", model=model)
-            logger.info("Thinking mode: {thinking}", thinking=thinking)
+        # Use custom LLM if provided, otherwise create from config
+        if llm is None:
+            llm = create_llm(
+                provider,
+                model,
+                thinking=thinking,
+                session_id=session.id,
+                oauth=oauth,
+            )
+            if llm is not None:
+                logger.info("Using LLM provider: {provider}", provider=provider)
+                logger.info("Using LLM model: {model}", model=model)
+                logger.info("Thinking mode: {thinking}", thinking=thinking)
+        else:
+            logger.info("Using custom LLM instance")
 
         runtime = await Runtime.create(config, oauth, llm, session, yolo, skills_dir)
 

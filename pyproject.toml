@@ -65,9 +65,9 @@ members = [
 ]
 
 [tool.uv.sources]
-kosong = { workspace = true }
 pykaos = { workspace = true }
 kimi-cli = { workspace = true }
+kosong = { workspace = true }
 
 [project.scripts]
 kimi = "kimi_cli.cli:cli"
