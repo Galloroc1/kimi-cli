@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 极简测试 Kimi CLI Agent
-使用自定义 LLM 配置
+使用自定义 LLM 配置，支持聊天记录和 Command+Q 退出
 """
 import asyncio
 import os
@@ -14,8 +14,8 @@ from kaos.path import KaosPath
 from kimi_cli.session import Session
 from kimi_cli.app import KimiCLI
 from kimi_cli.llm import create_llm
-from kimi_cli.config import LLMModel,  LLMProvider
-from kimi_cli.wire.types import TextPart, ToolCall, ToolResult
+from kimi_cli.config import LLMModel, LLMProvider
+from kimi_cli.wire.types import TextPart, ToolCall, ToolResult, ToolCallPart, WireMessage
 from pydantic import SecretStr
 
 
@@ -40,35 +40,95 @@ def create_custom_llm():
     return create_llm(provider, model)
 
 
-async def chat(prompt: str):
-    """最简单的聊天接口"""
+async def chat_loop():
+    """聊天循环，支持聊天记录和 Command+Q 退出"""
     # 创建自定义 LLM
     llm = create_custom_llm()
 
     session = await Session.create(KaosPath.cwd())
     instance = await KimiCLI.create(session, llm=llm, yolo=True)
-    cancel_event = asyncio.Event()
 
-    async for msg in instance.run(prompt, cancel_event):
-        print(msg)
-        match msg:
-            case TextPart(text=text):
-                print(text, end="", flush=True)
-            case ToolCall(name=name):
-                print(f"\n[工具: {name}]")
-            case ToolResult():
-                print(f"\n[工具完成]")
+    # 聊天记录
+    history = []
+
+    print("🤖 Kimi CLI Agent 已启动")
+    print("💡 输入你的消息开始对话，按 Ctrl+Q 或输入 'exit'/'quit' 退出\n")
+
+    while True:
+        try:
+            # 获取用户输入
+            prompt = input("👤 你: ").strip()
+
+            # 检查退出命令
+            if prompt.lower() in ("exit", "quit", "q"):
+                print("👋 再见！")
+                break
+
+            if not prompt:
+                continue
+
+            # 添加到历史记录
+            history.append({"role": "user", "content": prompt})
+
+            # 构建带上下文的提示
+            context_prompt = build_context_prompt(history)
+
+            cancel_event = asyncio.Event()
+            response_parts = []
+
+            print("🤖 Kimi: ", end="", flush=True)
+
+            msg: WireMessage
+            async for msg in instance.run(context_prompt, cancel_event):
+                match msg:
+                    case TextPart(text=text):
+                        print(text, end="", flush=True)
+                        response_parts.append(text)
+                    case ToolCall(name=name):
+                        print(f"\n[工具: {name}]")
+                        print("*"*100)
+                        input()
+                    case ToolCallPart(arguments_part=arguments_part):
+                        print(arguments_part, end="", flush=True)
+                    case ToolResult():
+                        print(f"\n[工具完成]{msg}")
+                        print("*" * 100)
+                        input()
+
+            print()  # 换行
+
+            # 保存助手回复到历史
+            full_response = "".join(response_parts)
+            history.append({"role": "assistant", "content": full_response})
+
+            # 显示历史轮数
+            print(f"\n📜 当前对话轮数: {len(history) // 2}\n")
+
+        except KeyboardInterrupt:
+            print("\n👋 检测到中断，再见！")
+            break
+        except EOFError:
+            print("\n👋 检测到 EOF，再见！")
+            break
 
 
-if __name__ == "__main__":
-    prompt = sys.argv[1] if len(sys.argv) > 1 else "你好"
+def build_context_prompt(history):
+    """构建带上下文的提示"""
+    if len(history) <= 1:
+        return history[-1]["content"] if history else ""
 
-    # 显示当前配置
-    print(f"📍 Base URL: {BASE_URL}", file=sys.stderr)
-    masked = API_KEY[:10] + "..." + API_KEY[-4:] if len(API_KEY) > 14 else "***"
-    print(f"🔑 Auth Token: {masked}", file=sys.stderr)
-    print(f"🤖 Model: {MODEL_NAME}", file=sys.stderr)
-    print(f"👤 用户: {prompt}\n🤖 AI: ", end="", flush=True)
+    # 构建上下文
+    lines = ["以下是之前的对话历史：\n"]
 
-    asyncio.run(chat(prompt))
-    print()  # 最后换行
+    for msg in history[:-1]:
+        role = "用户" if msg["role"] == "user" else "助手"
+        lines.append(f"{role}: {msg['content']}\n")
+
+    lines.append("\n现在请回答用户的最新问题：")
+    lines.append(f"用户: {history[-1]['content']}")
+
+    return "\n".join(lines)
+
+
+if __name__ == '__main__':
+    asyncio.run(chat_loop())
