@@ -8,6 +8,7 @@ import contextlib
 import io
 import json
 import mimetypes
+import os
 import sys
 import time
 from collections.abc import AsyncGenerator
@@ -75,7 +76,7 @@ class SessionProcess:
     - `_ws_lock` guards WebSocket state.
     """
 
-    def __init__(self, session_id: UUID) -> None:
+    def __init__(self, session_id: UUID, worker_env_overrides: dict[str, str] | None = None) -> None:
         """Initialize a session process."""
         self.session_id = session_id
         self._in_flight_prompt_ids: set[str] = set()
@@ -99,6 +100,10 @@ class SessionProcess:
         self._lock = asyncio.Lock()
         self._ws_lock = asyncio.Lock()
         self._sent_files: set[str] = set()
+        self._worker_env_overrides = worker_env_overrides or {}
+
+    def update_worker_env_overrides(self, overrides: dict[str, str]) -> None:
+        self._worker_env_overrides = dict(overrides)
 
     @property
     def is_alive(self) -> bool:
@@ -202,13 +207,18 @@ class SessionProcess:
                     str(self.session_id),
                 ]
 
+            env = dict(os.environ)
+            if self._worker_env_overrides:
+                env.update(self._worker_env_overrides)
+            env = get_clean_env(env)
+
             self._process = await asyncio.create_subprocess_exec(
                 *worker_cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=STREAM_LIMIT,
-                env=get_clean_env(),
+                env=env,
             )
 
             self._read_task = asyncio.create_task(self._read_loop())
@@ -663,6 +673,7 @@ class KimiCLIRunner:
         """Initialize the runner."""
         self._sessions: dict[UUID, SessionProcess] = {}
         self._lock = asyncio.Lock()
+        self._worker_env_overrides: dict[str, str] = {}
 
     def start(self) -> None:
         """Start the runner (no-op, sessions started on demand)."""
@@ -685,8 +696,19 @@ class KimiCLIRunner:
         """Get or create a session process."""
         async with self._lock:
             if session_id not in self._sessions:
-                self._sessions[session_id] = SessionProcess(session_id)
+                self._sessions[session_id] = SessionProcess(
+                    session_id, worker_env_overrides=self._worker_env_overrides
+                )
             return self._sessions[session_id]
+
+    def set_agent_ran_enabled(self, enabled: bool) -> None:
+        """Enable or disable agent-ran integration for new workers."""
+        if enabled:
+            self._worker_env_overrides["KIMI_SOUL"] = "agent-ran"
+        else:
+            self._worker_env_overrides.pop("KIMI_SOUL", None)
+        for session in self._sessions.values():
+            session.update_worker_env_overrides(self._worker_env_overrides)
 
     def get_session(self, session_id: UUID) -> SessionProcess | None:
         """Get a session process if it exists."""

@@ -9,6 +9,7 @@ from kimi_cli import logger
 from kimi_cli.config import LLMModel, get_config_file, load_config, save_config
 from kimi_cli.llm import ProviderType, derive_model_capabilities
 from kimi_cli.web.runner.process import KimiCLIRunner
+from kimi_cli.web.store.settings import load_web_settings, save_web_settings, WebSettings
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -26,6 +27,7 @@ class GlobalConfig(BaseModel):
     default_model: str = Field(description="Current default model key")
     default_thinking: bool = Field(description="Current default thinking mode")
     models: list[ConfigModel] = Field(description="All configured models")
+    agent_ran_enabled: bool = Field(description="Whether agent-ran integration is enabled")
 
 
 class UpdateGlobalConfigRequest(BaseModel):
@@ -33,6 +35,9 @@ class UpdateGlobalConfigRequest(BaseModel):
 
     default_model: str | None = Field(default=None, description="New default model key")
     default_thinking: bool | None = Field(default=None, description="New default thinking mode")
+    agent_ran_enabled: bool | None = Field(
+        default=None, description="Enable or disable agent-ran integration"
+    )
     restart_running_sessions: bool | None = Field(
         default=None, description="Whether to restart running sessions"
     )
@@ -76,6 +81,7 @@ class UpdateConfigTomlResponse(BaseModel):
 def _build_global_config() -> GlobalConfig:
     """Build GlobalConfig from kimi-cli config."""
     config = load_config()
+    settings = load_web_settings()
 
     models: list[ConfigModel] = []
     for model_name, model in config.models.items():
@@ -102,6 +108,7 @@ def _build_global_config() -> GlobalConfig:
         default_model=config.default_model,
         default_thinking=config.default_thinking,
         models=models,
+        agent_ran_enabled=settings.agent_ran_enabled,
     )
 
 
@@ -148,8 +155,20 @@ async def update_global_config(
     if request.default_thinking is not None:
         config.default_thinking = request.default_thinking
 
-    # Save config
+    settings = load_web_settings()
+    settings_updated = False
+
+    if request.agent_ran_enabled is not None:
+        settings = settings.model_copy(
+            update={"agent_ran_enabled": request.agent_ran_enabled}
+        )
+        settings_updated = True
+
+    # Save config and settings
     save_config(config)
+    if settings_updated:
+        save_web_settings(settings)
+        runner.set_agent_ran_enabled(settings.agent_ran_enabled)
 
     # Restart running workers to apply config changes
     restarted: list[str] = []

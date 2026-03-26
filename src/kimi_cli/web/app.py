@@ -33,6 +33,7 @@ from kimi_cli.web.auth import (
     normalize_allowed_origins,
 )
 from kimi_cli.web.runner.process import KimiCLIRunner
+from kimi_cli.web.store.settings import load_web_settings
 
 # Configure logging based on LOG_LEVEL environment variable
 _log_level = os.environ.get("LOG_LEVEL", "WARNING").upper()
@@ -178,6 +179,8 @@ def create_app(
 
         # Start KimiCLI runner
         runner = KimiCLIRunner()
+        settings = load_web_settings()
+        runner.set_agent_ran_enabled(settings.agent_ran_enabled)
         app.state.runner = runner
         runner.start()
 

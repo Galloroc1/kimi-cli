@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from typing import Any
 from uuid import UUID
@@ -22,8 +23,33 @@ from kimi_cli.exception import MCPConfigError
 from kimi_cli.web.store.sessions import load_session_by_id
 
 
+def _agent_ran_enabled() -> bool:
+    env_flag = os.getenv("KIMI_SOUL", "").strip().lower() == "agent-ran"
+    if env_flag:
+        return True
+    try:
+        from kimi_cli.web.store.settings import load_web_settings
+
+        return load_web_settings().agent_ran_enabled
+    except Exception:
+        return False
+
+
 async def run_worker(session_id: UUID) -> None:
     """Run the KimiCLI worker for a session."""
+    if _agent_ran_enabled():
+        from kimi_cli.integrations.agent_ran_soul import build_agent_ran_soul
+        from kimi_cli.wire.server import WireServer
+
+        try:
+            soul = build_agent_ran_soul()
+        except Exception:
+            logger.exception("Failed to start agent-ran soul")
+            raise
+        server = WireServer(soul)
+        await server.serve()
+        return
+
     # Find session by ID using the web store
     joint_session = load_session_by_id(session_id)
     if joint_session is None:
@@ -80,7 +106,11 @@ def main() -> None:
     enable_logging(debug=False)
 
     # Run the async worker
-    asyncio.run(run_worker(session_id))
+    try:
+        asyncio.run(run_worker(session_id))
+    except Exception:
+        logger.exception("Worker crashed")
+        raise
 
 
 if __name__ == "__main__":

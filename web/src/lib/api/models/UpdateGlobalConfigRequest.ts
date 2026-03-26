@@ -36,6 +36,12 @@ export interface UpdateGlobalConfigRequest {
      * @type {boolean}
      * @memberof UpdateGlobalConfigRequest
      */
+    agentRanEnabled?: boolean | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof UpdateGlobalConfigRequest
+     */
     restartRunningSessions?: boolean | null;
     /**
      * 
@@ -64,6 +70,7 @@ export function UpdateGlobalConfigRequestFromJSONTyped(json: any, ignoreDiscrimi
         
         'defaultModel': json['default_model'] == null ? undefined : json['default_model'],
         'defaultThinking': json['default_thinking'] == null ? undefined : json['default_thinking'],
+        'agentRanEnabled': json['agent_ran_enabled'] == null ? undefined : json['agent_ran_enabled'],
         'restartRunningSessions': json['restart_running_sessions'] == null ? undefined : json['restart_running_sessions'],
         'forceRestartBusySessions': json['force_restart_busy_sessions'] == null ? undefined : json['force_restart_busy_sessions'],
     };
@@ -82,6 +89,7 @@ export function UpdateGlobalConfigRequestToJSONTyped(value?: UpdateGlobalConfigR
         
         'default_model': value['defaultModel'],
         'default_thinking': value['defaultThinking'],
+        'agent_ran_enabled': value['agentRanEnabled'],
         'restart_running_sessions': value['restartRunningSessions'],
         'force_restart_busy_sessions': value['forceRestartBusySessions'],
     };

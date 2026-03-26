@@ -74,6 +74,8 @@ export function GlobalConfigControls({
   const thinkingChecked = config?.defaultThinking ?? false;
   const thinkingDisabled =
     isLoading || isUpdating || thinkingState !== "enabled";
+  const agentRanChecked = config?.agentRanEnabled ?? false;
+  const agentRanDisabled = isLoading || isUpdating;
 
   const handleSelectModel = useCallback(
     async (modelKey: string) => {
@@ -142,6 +144,36 @@ export function GlobalConfigControls({
     [config, update],
   );
 
+  const handleAgentRanToggle = useCallback(
+    async (checked: boolean) => {
+      if (!config) {
+        return;
+      }
+      try {
+        const resp = await update({ agentRanEnabled: checked });
+        const skippedBusy = resp.skippedBusySessionIds ?? [];
+
+        if (skippedBusy.length > 0) {
+          setLastBusySkip(skippedBusy);
+          toast.message("Some sessions were skipped (busy)", {
+            description: `Skipped ${skippedBusy.length} busy session(s). You can retry when they are idle, or force restart.`,
+          });
+        } else {
+          setLastBusySkip(null);
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to update agent-ran setting";
+        toast.error("Failed to update agent-ran setting", {
+          description: message,
+        });
+      }
+    },
+    [config, update],
+  );
+
   const handleForceRestartBusy = useCallback(async () => {
     if (!lastBusySkip || lastBusySkip.length === 0) {
       return;
@@ -194,6 +226,18 @@ export function GlobalConfigControls({
         }
         disabled={thinkingDisabled}
         onCheckedChange={handleThinkingToggle}
+      />
+    </div>
+  );
+
+  const agentRanToggle = (
+    <div className="flex h-9 items-center gap-2 rounded-md px-2">
+      <span className="text-xs text-muted-foreground">Agent-ran</span>
+      <Switch
+        aria-label="Toggle agent-ran integration"
+        checked={agentRanChecked}
+        disabled={agentRanDisabled}
+        onCheckedChange={handleAgentRanToggle}
       />
     </div>
   );
@@ -276,6 +320,8 @@ export function GlobalConfigControls({
       ) : (
         thinkingToggle
       )}
+
+      {agentRanToggle}
 
       {onPlanModeChange && (
         <>

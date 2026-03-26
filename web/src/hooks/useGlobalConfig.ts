@@ -9,6 +9,7 @@ import type {
 type UpdateGlobalConfigArgs = {
   defaultModel?: string;
   defaultThinking?: boolean;
+  agentRanEnabled?: boolean;
   restartRunningSessions?: boolean;
   forceRestartBusySessions?: boolean;
 };
@@ -56,6 +57,7 @@ export function useGlobalConfig(): UseGlobalConfigReturn {
         const body: UpdateGlobalConfigRequest = {
           defaultModel: args.defaultModel ?? undefined,
           defaultThinking: args.defaultThinking ?? undefined,
+          agentRanEnabled: args.agentRanEnabled ?? undefined,
           restartRunningSessions: args.restartRunningSessions ?? undefined,
           forceRestartBusySessions: args.forceRestartBusySessions ?? undefined,
         };

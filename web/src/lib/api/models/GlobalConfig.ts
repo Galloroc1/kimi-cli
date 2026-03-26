@@ -45,6 +45,12 @@ export interface GlobalConfig {
      * @memberof GlobalConfig
      */
     models: Array<ConfigModel>;
+    /**
+     * Whether agent-ran integration is enabled
+     * @type {boolean}
+     * @memberof GlobalConfig
+     */
+    agentRanEnabled: boolean;
 }
 
 /**
@@ -54,6 +60,7 @@ export function instanceOfGlobalConfig(value: object): value is GlobalConfig {
     if (!('defaultModel' in value) || value['defaultModel'] === undefined) return false;
     if (!('defaultThinking' in value) || value['defaultThinking'] === undefined) return false;
     if (!('models' in value) || value['models'] === undefined) return false;
+    if (!('agentRanEnabled' in value) || value['agentRanEnabled'] === undefined) return false;
     return true;
 }
 
@@ -70,6 +77,7 @@ export function GlobalConfigFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'defaultModel': json['default_model'],
         'defaultThinking': json['default_thinking'],
         'models': ((json['models'] as Array<any>).map(ConfigModelFromJSON)),
+        'agentRanEnabled': json['agent_ran_enabled'],
     };
 }
 
@@ -87,6 +95,7 @@ export function GlobalConfigToJSONTyped(value?: GlobalConfig | null, ignoreDiscr
         'default_model': value['defaultModel'],
         'default_thinking': value['defaultThinking'],
         'models': ((value['models'] as Array<any>).map(ConfigModelToJSON)),
+        'agent_ran_enabled': value['agentRanEnabled'],
     };
 }
 
